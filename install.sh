@@ -143,7 +143,7 @@ copy_extension() { # srcdir uuid
   mkdir -p "$EXT/$uuid"
   rsync -a --exclude '.git*' --exclude node_modules --exclude tests \
         --exclude '*.md' --exclude '*.sh' "$from/" "$EXT/$uuid/"
-  [ -d "$EXT/$uuid/schemas" ] && glib-compile-schemas "$EXT/$uuid/schemas"
+  if [ -d "$EXT/$uuid/schemas" ]; then glib-compile-schemas "$EXT/$uuid/schemas"; fi
 }
 
 # ---------------------------------------------------------------------------
@@ -172,7 +172,21 @@ step_theme() {
   say "Installing the WhiteSur theme, icons and cursors"
   local d
   d=$(fetch "$GH/vinceliuice/WhiteSur-gtk-theme.git" WhiteSur-gtk-theme "$WHITESUR_GTK")
-  # -l also writes the libadwaita (GTK4) variant into ~/.config/gtk-4.0.
+  # -l also writes the libadwaita (GTK4) variant into ~/.config/gtk-4.0, after
+  # deleting these entries there with no backup of its own (its backup line is
+  # commented out). Keep what the user had; uninstall puts the first copy back.
+  # Only on the first run: a re-run would save WhiteSur's own files, and that
+  # backup must never be the one uninstall restores. The folder is made even
+  # when there is nothing to save -- it marks "the theme step ran", so
+  # uninstall leaves ~/.config/gtk-4.0 alone after --skip theme.
+  local gtk4="$HOME/.config/gtk-4.0" e
+  if ! ls -d "$DATA"/backups/*/gtk-4.0 >/dev/null 2>&1; then
+    mkdir -p "$(backup_dir)/gtk-4.0"
+    for e in gtk.css gtk-dark.css gtk-Light.css gtk-Dark.css assets windows-assets; do
+      if [ -e "$gtk4/$e" ] || [ -L "$gtk4/$e" ]; then cp -a "$gtk4/$e" "$BACKUPS/gtk-4.0/"; fi
+    done
+    note "previous ~/.config/gtk-4.0 theme files (if any) saved to $BACKUPS/gtk-4.0"
+  fi
   (cd "$d" && ./install.sh -c dark -c light -l >/dev/null)
   d=$(fetch "$GH/vinceliuice/WhiteSur-icon-theme.git" WhiteSur-icon-theme "$WHITESUR_ICONS")
   (cd "$d" && ./install.sh >/dev/null)
@@ -200,6 +214,9 @@ build_fork() { # dir how
       meson setup "$dir/_build" "$dir" \
         --prefix="$(dirname "$USERDATA")" --datadir="$(basename "$USERDATA")" >/dev/null
       meson install --quiet -C "$dir/_build" >/dev/null
+      # Meson also installs a schema, a .desktop file and an icon outside the
+      # extension; its log is how uninstall finds exactly those.
+      mkdir -p "$DATA" && cp "$dir/_build/meson-logs/install-log.txt" "$DATA/ding-meson-install.log"
       # Meson puts the schema in glib-2.0/schemas; keep a copy beside the
       # extension too, where getSettings() looks first.
       mkdir -p "$EXT/$uuid/schemas"
@@ -264,10 +281,32 @@ step_keyd() {
   make -s -C "$d" >/dev/null
   sudo make -s -C "$d" install >/dev/null
 
+  # Check the config before it goes anywhere: checked in place, a rejected one
+  # was left for the next keyd restart. The include resolves beside the file.
+  local chk; chk=$(mktemp -d)
+  cp "$REPO/config/keyd/default.conf" "$chk/"
+  cp "$REPO/config/keyd/macos-ctrl.on" "$chk/macos-ctrl"
+  keyd check "$chk/default.conf" >/dev/null || { rm -rf "$chk"; die "keyd rejected its config"; }
+  rm -rf "$chk"
+  # Someone who already uses keyd keeps their config and its on/off state;
+  # uninstall puts both back. First run only, for the same reason as the
+  # theme backup: a re-run would save this installer's own config.
+  local f
+  if ! ls -d "$DATA"/backups/*/keyd >/dev/null 2>&1; then
+    mkdir -p "$(backup_dir)/keyd"
+    for f in default.conf macos-ctrl; do
+      if sudo test -e "/etc/keyd/$f"; then
+        # shellcheck disable=SC2024  # reading a root file into one we own
+        sudo cat "/etc/keyd/$f" > "$BACKUPS/keyd/$f"
+      fi
+    done
+    if systemctl is-enabled keyd >/dev/null 2>&1; then touch "$BACKUPS/keyd/.was-enabled"; fi
+    if [ -e "$HOME/.config/keyd/app.conf" ]; then cp -a "$HOME/.config/keyd/app.conf" "$BACKUPS/keyd/app.conf"; fi
+    if id -nG "$USER" | grep -qw keyd; then touch "$BACKUPS/keyd/.was-in-group"; fi
+  fi
   sudo install -d /etc/keyd
   sudo install -m644 "$REPO/config/keyd/default.conf" /etc/keyd/default.conf
   sudo install -m644 "$REPO/config/keyd/macos-ctrl.on" /etc/keyd/macos-ctrl
-  sudo keyd check /etc/keyd/default.conf >/dev/null || die "keyd rejected its config"
   # The per-application mapper talks to keyd over a socket owned by group keyd,
   # so the group has to exist before keyd starts and creates that socket.
   getent group keyd >/dev/null || sudo groupadd keyd
@@ -325,13 +364,18 @@ step_apps() {
     [ -s "$vs" ] || echo '{}' > "$vs"
     if ! grep -q '"window.titleBarStyle"' "$vs"; then
       cp "$vs" "$(backup_dir)/vscode-settings.json"
-      sed -i '0,/{/s//{\n    "window.titleBarStyle": "native",/' "$vs"
+      # The marker comment (VS Code reads JSONC) is how uninstall finds it. It
+      # ends the line: whatever followed the `{` (a `}`, or a whole one-line
+      # file) goes on the next, or the comment would swallow it.
+      sed -i '0,/{/{s//{\n    "window.titleBarStyle": "native", \/\/ yet-another-gnomintosh\n/;s/\n$//}' "$vs"
       note "VS Code: native title bar, so its menu goes to the top bar"
     fi
   fi
   # Firefox only exports its menubar with this pref (and X11, via x11-menus).
+  # The flatpak keeps its profiles under ~/.var/app; x11-menus covers it too.
   local prof
-  for prof in "$HOME"/.config/mozilla/firefox/*.default* "$HOME"/.mozilla/firefox/*.default*; do
+  for prof in "$HOME"/.config/mozilla/firefox/*.default* "$HOME"/.mozilla/firefox/*.default* \
+              "$HOME"/.var/app/org.mozilla.firefox/{config/mozilla,.mozilla}/firefox/*.default*; do
     [ -d "$prof" ] || continue
     grep -qs 'widget.gtk.global-menu.enabled' "$prof/user.js" ||
       printf '// yet-another-gnomintosh: menubar in the top bar\nuser_pref("widget.gtk.global-menu.enabled", true);\n' >> "$prof/user.js"
@@ -366,7 +410,9 @@ step_login_screen() {
   sudo systemctl daemon-reload
   sudo systemctl enable --now gdm-wallpaper-sync.path gdm-monitors-sync.path >/dev/null
   sudo systemctl start gdm-wallpaper-sync.service
-  [ -f "$HOME/.config/monitors.xml" ] && sudo systemctl start gdm-monitors-sync.service
+  # A single-monitor setup may have no monitors.xml; not an error (and as a
+  # function's last command a failed test would stop the install under set -e).
+  if [ -f "$HOME/.config/monitors.xml" ]; then sudo systemctl start gdm-monitors-sync.service; fi
   note "your wallpaper, display layout and the lock screen's glass now carry over to the login screen"
 }
 

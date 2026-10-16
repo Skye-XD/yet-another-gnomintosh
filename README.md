@@ -134,6 +134,12 @@ extension it replaces is moved aside rather than deleted, all under
   the shell hides the drag icon so it doesn't fly home.
 - **Dash to Dock is stock**, and occasionally trips over itself after a big
   package install. Logging out fixes it.
+- **keyd puts you in its group.** Per-app key mapping talks to keyd over a
+  socket only the `keyd` group may use, so the install adds you to it. That
+  means anything running as you can have keyd type keystrokes anywhere,
+  including into other apps, the lock screen and a root console. It's how
+  keyd's per-app mapper is designed upstream. If that trade isn't for you,
+  install with `--skip keyd`; uninstall takes you out of the group again.
 - It's tuned to my taste and my hardware. That's rather the point of a confession.
 
 ## What's in the box, and whose work it really is

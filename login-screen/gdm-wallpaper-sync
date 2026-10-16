@@ -62,21 +62,24 @@ as_user head -c 268435456 -- "$src" > "$snap" ||
 # Appearance to ~/.config/background, so this is the normal case, not a corner
 # one. Publish a copy the greeter can read and point it at that instead.
 mkdir -p "$STATE"
-base=${src##*/}; ext=${base##*.}
-# ~/.config/background has no extension at all. Most loaders sniff content,
-# but naming the copy correctly costs nothing and removes the question.
-if [ "$ext" = "$base" ]; then
-    case "$(as_user file -b --mime-type - < "$snap")" in
-        image/jpeg) ext=jpg ;;
-        image/png)  ext=png ;;
-        image/webp) ext=webp ;;
-        image/jxl)  ext=jxl ;;
-        image/avif) ext=avif ;;
-        *)          ext=img ;;
-    esac
-fi
+# The extension comes from the content, never the user's filename: a name with
+# a quote or a space in it ended up inside the greeter's dconf write.
+# (~/.config/background has no extension at all anyway.)
+case "$(as_user file -b --mime-type - < "$snap")" in
+    image/jpeg) ext=jpg ;;
+    image/png)  ext=png ;;
+    image/webp) ext=webp ;;
+    image/jxl)  ext=jxl ;;
+    image/avif) ext=avif ;;
+    *)          ext=img ;;
+esac
 PUBLIC="$STATE/wallpaper.$ext"
 install -m 644 "$snap" "$PUBLIC"
+# Only the current wallpaper stays published: an earlier one under another
+# extension would otherwise stay world-readable here after it was changed.
+for old in "$STATE"/wallpaper.*; do
+    [ "$old" = "$PUBLIC" ] || rm -f "$old"
+done
 chmod 755 "$STATE"
 restorecon "$PUBLIC" "$STATE" 2>/dev/null || true
 gdm_uri="file://$PUBLIC"
@@ -98,7 +101,10 @@ fi
 src_sha=$(sha256sum "$snap" | cut -d' ' -f1)
 # Bump when the theme edits below change, so the next run rebuilds once.
 THEME_EDITS=glass3
-need_theme=1; grep -qx "uri=$uri src=$src_sha edits=$THEME_EDITS" "$STAMP" 2>/dev/null && need_theme=0
+# The URI is the user's and may hold a newline; only its hash goes in the
+# stamp, so it cannot forge a built= line there.
+uri_sha=$(printf '%s' "$uri" | sha256sum | cut -d' ' -f1)
+need_theme=1; grep -qx "uri=$uri_sha src=$src_sha edits=$THEME_EDITS" "$STAMP" 2>/dev/null && need_theme=0
 need_paths=0
 greeter_paths=$(XDG_CONFIG_HOME="$GREETER_CONFIG" DCONF_PROFILE=gdm \
     dconf dump /org/gnome/shell/extensions/gdm-extension/ 2>/dev/null || true)
@@ -206,7 +212,7 @@ PYEOF
 glib-compile-resources --sourcedir="$work/res" --target="$work/new.gresource" "$work/theme.gresource.xml"
 install -m 644 "$work/new.gresource" "$THEME"
 restorecon "$THEME" 2>/dev/null || true
-printf 'uri=%s src=%s edits=%s\nbuilt=%s\n' "$uri" "$src_sha" "$THEME_EDITS" "$(sha256sum "$THEME" | cut -d' ' -f1)" > "$STAMP"
+printf 'uri=%s src=%s edits=%s\nbuilt=%s\n' "$uri_sha" "$src_sha" "$THEME_EDITS" "$(sha256sum "$THEME" | cut -d' ' -f1)" > "$STAMP"
 fi
 
 # gdm re-chowns this tree per greeter session, so match the dconf dir's owner

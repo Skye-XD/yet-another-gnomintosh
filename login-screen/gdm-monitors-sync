@@ -13,14 +13,23 @@ SRC=${1:?usage: gdm-monitors-sync <path to a user monitors.xml>}
 DST_DIR=/var/lib/gdm/seat0/config
 DST="$DST_DIR/monitors.xml"
 
-[ -f "$SRC" ] || { echo "no such file: $SRC" >&2; exit 1; }
 # If gdm has never run there is nothing to sync into, and creating the tree by
 # hand risks wrong ownership on a directory gdm manages.
 [ -d "$DST_DIR" ] || { echo "no $DST_DIR yet; skipping" >&2; exit 0; }
 
+# This runs as root on a path the user controls: read it as the owner of its
+# directory, once, and use only that snapshot. Checked and then copied in
+# place, the file could be swapped (a symlink, a FIFO) in between.
+owner=$(stat -c %U "$(dirname "$SRC")")
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+snap="$work/monitors.xml"
+runuser -u "$owner" -- test -f "$SRC" || { echo "no such file: $SRC" >&2; exit 1; }
+runuser -u "$owner" -- head -c 1048576 -- "$SRC" > "$snap" ||
+    { echo "cannot read $SRC as $owner" >&2; exit 1; }
+
 # Never publish a truncated or malformed file: a broken monitor config is felt
 # at the login screen, which is the hardest place to recover from.
-python3 - "$SRC" <<'PY'
+python3 -I - "$snap" <<'PY'
 import sys, xml.etree.ElementTree as ET
 root = ET.parse(sys.argv[1]).getroot()
 if root.tag != 'monitors':
@@ -29,9 +38,9 @@ if not root.findall('configuration'):
     raise SystemExit('no <configuration> entries, refusing to sync')
 PY
 
-cmp -s "$SRC" "$DST" 2>/dev/null && exit 0   # already identical, nothing to do
+cmp -s "$snap" "$DST" 2>/dev/null && exit 0   # already identical, nothing to do
 
-install -m 644 "$SRC" "$DST"
+install -m 644 "$snap" "$DST"
 # Match the sibling config files; gdm re-chowns this tree for each greeter uid.
 chown "$(stat -c '%u:%g' "$DST_DIR/dconf")" "$DST"
 restorecon "$DST" 2>/dev/null || true
