@@ -91,6 +91,7 @@ enable-app-window-buttons=true
 enable-firefox-styling=false
 enable-launchpad-app=false
 hide-activities-button=true
+lock-icon=true
 move-window-to-new-workspace=false
 overview-seamless-zoom=false
 overview-wallpaper-background=false
