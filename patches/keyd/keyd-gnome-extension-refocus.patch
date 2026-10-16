@@ -1,0 +1,62 @@
+diff --git a/data/gnome-extension-45/extension.js b/data/gnome-extension-45/extension.js
+index 0d1968b..52a0b5c 100644
+--- a/data/gnome-extension-45/extension.js
++++ b/data/gnome-extension-45/extension.js
+@@ -36,29 +36,49 @@ function send(msg) {
+ function on_pipe_open(file, res) {
+ 	log('pipe opened');
+ 	pipe = file.append_to_finish(res);
++	// Focus changes before the mapper opened the pipe were dropped above.
++	send_focus();
+ }
+ 
++function send_focus() {
++	const win = global.display.focus_window;
++	const cls = win ? win.get_wm_class() : 'root';
++	const title = win ? win.get_title() : '';
++
++	send(`${cls}	${title}\n`);
++}
++
++let in_system_modal = false;
++
+ export default class KeydExtension extends Extension {
+ 	enable() {
+-		Shell.WindowTracker.get_default().connect('notify::focus-app', () => {
+-			const win = global.display.focus_window;
+-			const cls = win ? win.get_wm_class() : 'root';
+-			const title = win ? win.get_title() : '';
+-
+-			send(`${cls}	${title}\n`);
+-		});
++		Shell.WindowTracker.get_default().connect('notify::focus-app', send_focus);
+ 
+ 		Main.layoutManager.connectObject(
+ 			'system-modal-opened', () => {
+-				send(`system-modal	${global.stage.get_title()}\n`);
++				in_system_modal = true;
++				send(`system-modal	\n`);  // Stage.get_title() is gone in GNOME 50
+ 			},
+ 			this
+ 		);
+ 
++		// There is no system-modal-closed. Popping the last modal restores
++		// the stage's key focus, and the focused app is usually unchanged,
++		// so without this the mapper kept the system-modal bindings (Super+C
++		// reached a terminal as Ctrl+C) until the next app switch.
++		global.stage.connectObject('notify::key-focus', () => {
++			if (in_system_modal && Main.modalCount === 0) {
++				in_system_modal = false;
++				send_focus();
++			}
++		}, this);
++
+ 		 GLib.spawn_command_line_async('keyd-application-mapper -d'); 
+ 	}
+ 
+ 	disable() {
++		Main.layoutManager.disconnectObject(this);
++		global.stage.disconnectObject(this);
+ 		GLib.spawn_command_line_async('pkill -f keyd-application-mapper');
+ 	}
+ }

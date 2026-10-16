@@ -1,0 +1,95 @@
+# macOS-style Control in applications, included by /etc/keyd/default.conf.
+# Installed as /etc/keyd/macos-ctrl by macos-ctrl on|off
+# (no .conf suffix: keyd would load that as a keyboard config of its own).
+#
+# Ctrl+<letter> does text editing, as in any macOS text field; every other
+# Ctrl+letter does nothing -- Super is the shortcut key now. Shift still
+# applies, so Ctrl+Shift+A selects to the line start. Ptyxis gets the real
+# Ctrl back through ~/.config/keyd/app.conf.
+
+[control]
+a = home
+b = left
+c = noop
+d = delete
+e = end
+f = right
+g = noop
+h = backspace
+i = noop
+j = noop
+k = macro(S-end delete)
+l = noop
+m = noop
+n = down
+o = noop
+p = up
+q = noop
+r = noop
+s = noop
+t = noop
+u = noop
+v = noop
+w = noop
+x = noop
+y = noop
+z = noop
+
+# Ctrl+Alt(+Shift)+<letter> passes through untouched (screen recording is
+# Ctrl+Shift+Alt+R). keyd resolves a key in the most recently activated
+# layer that binds it, so without these [control] would swallow them.
+[control+alt]
+a = C-A-a
+b = C-A-b
+c = C-A-c
+d = C-A-d
+e = C-A-e
+f = C-A-f
+g = C-A-g
+h = C-A-h
+i = C-A-i
+j = C-A-j
+k = C-A-k
+l = C-A-l
+m = C-A-m
+n = C-A-n
+o = C-A-o
+p = C-A-p
+q = C-A-q
+r = C-A-r
+s = C-A-s
+t = C-A-t
+u = C-A-u
+v = C-A-v
+w = C-A-w
+x = C-A-x
+y = C-A-y
+z = C-A-z
+
+[control+alt+shift]
+a = C-A-S-a
+b = C-A-S-b
+c = C-A-S-c
+d = C-A-S-d
+e = C-A-S-e
+f = C-A-S-f
+g = C-A-S-g
+h = C-A-S-h
+i = C-A-S-i
+j = C-A-S-j
+k = C-A-S-k
+l = C-A-S-l
+m = C-A-S-m
+n = C-A-S-n
+o = C-A-S-o
+p = C-A-S-p
+q = C-A-S-q
+r = C-A-S-r
+s = C-A-S-s
+t = C-A-S-t
+u = C-A-S-u
+v = C-A-S-v
+w = C-A-S-w
+x = C-A-S-x
+y = C-A-S-y
+z = C-A-S-z

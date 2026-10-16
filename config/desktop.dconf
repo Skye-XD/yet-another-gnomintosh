@@ -1,0 +1,44 @@
+[org/gnome/desktop/interface]
+color-scheme='prefer-dark'
+gtk-theme='WhiteSur-Dark'
+icon-theme='WhiteSur'
+cursor-theme='WhiteSur-cursors'
+enable-hot-corners=false
+
+[org/gnome/desktop/wm/preferences]
+button-layout='close,minimize,maximize:'
+focus-mode='click'
+
+[org/gnome/desktop/wm/keybindings]
+close=['<Super>w', '<Alt>F4']
+minimize=['<Super>m', '<Super>h']
+toggle-maximized=['<Control><Super>f', '<Alt>F10']
+unmaximize=['<Control><Super>r', '<Super>Down', '<Alt>F5']
+switch-applications=['<Super>Tab', '<Alt>Tab']
+switch-applications-backward=['<Shift><Super>Tab', '<Shift><Alt>Tab']
+switch-group=['<Super>Above_Tab', '<Alt>Above_Tab']
+switch-group-backward=['<Shift><Super>Above_Tab', '<Shift><Alt>Above_Tab']
+switch-windows=@as []
+switch-windows-backward=@as []
+switch-to-workspace-left=['<Control>Left']
+switch-to-workspace-right=['<Control>Right']
+move-to-workspace-left=['<Control><Shift>Left']
+move-to-workspace-right=['<Control><Shift>Right']
+switch-input-source=['<Control>space']
+switch-input-source-backward=['<Control><Shift>space']
+
+[org/gnome/mutter]
+overlay-key=''
+workspaces-only-on-primary=false
+
+[org/gnome/shell/keybindings]
+screenshot=['<Shift><Super>3', '<Shift>Print']
+show-screenshot-ui=['<Shift><Super>4', '<Shift><Super>5', 'Print']
+screenshot-window=['<Shift><Super>6', '<Alt>Print']
+toggle-message-tray=['<Super>n']
+focus-active-notification=['<Super><Shift>n']
+toggle-quick-settings=['<Super>c', '<Super>s']
+toggle-application-view=@as []
+
+[org/gnome/settings-daemon/plugins/media-keys]
+screensaver=['<Control><Super>q', '<Super>l']

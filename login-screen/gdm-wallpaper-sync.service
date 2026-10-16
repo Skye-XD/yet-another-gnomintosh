@@ -1,0 +1,15 @@
+[Unit]
+Description=Mirror the desktop user's wallpaper onto the GDM login screen
+# The path unit fires on every dconf write, and dconf rewrites the whole
+# database on any settings change, so bursts are entirely normal. There is
+# nothing here to rate-limit: the script stamps what it last synced and exits
+# immediately when nothing moved. Leaving the default limit in place is actively
+# harmful, because tripping it fails the .path unit as well, which then stops
+# watching until somebody notices by hand -- the wallpaper silently stops
+# syncing and nothing is logged again.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gdm-wallpaper-sync @HOME@/.config
+

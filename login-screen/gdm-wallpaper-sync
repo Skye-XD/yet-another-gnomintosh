@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+# Mirror the desktop wallpaper onto the GDM login screen, the way macOS does:
+# the desktop is the single source of truth and the login screen follows it.
+#
+# Two layers have to agree or the login screen flashes. The greeter paints
+# #lockDialogGroup from background.png inside the shell theme gresource at first
+# paint, then gdm-extension lays its own per-monitor widgets over it a moment
+# later. This writes the same image into both, so the handover is invisible.
+#
+# Which variant follows the user's colour-scheme: prefer-dark takes
+# picture-uri-dark, anything else takes picture-uri.
+#
+# The greeter reads settings from /var/lib/gdm/seat0/config with DCONF_PROFILE=gdm:
+# dconf synthesises user-db:user + system-db:gdm from the profile *name*, so this
+# works even though /etc/dconf/profile/gdm does not exist.
+set -euo pipefail
+
+USER_CONFIG="${1:?usage: gdm-wallpaper-sync <user XDG_CONFIG_HOME>}"
+STATE=/usr/local/share/gdm-wallpaper-sync
+THEME=/usr/share/gnome-shell/gnome-shell-theme.gresource
+PRISTINE="$STATE/theme-orig.gresource"
+STAMP="$STATE/stamp"
+GREETER_CONFIG=/var/lib/gdm/seat0/config
+MONITORS=4                                   # gdm-extension supports 1..4
+
+user_dconf() { XDG_CONFIG_HOME="$USER_CONFIG" dconf "$@"; }
+greeter_dconf() {
+    XDG_CONFIG_HOME="$GREETER_CONFIG" DCONF_PROFILE=gdm dbus-run-session -- dconf "$@"
+}
+unquote() { local v="$1"; v=${v#\'}; v=${v%\'}; printf '%s' "$v"; }
+
+scheme=$(unquote "$(user_dconf read /org/gnome/desktop/interface/color-scheme || true)")
+[ "$scheme" = prefer-dark ] && keys="picture-uri-dark picture-uri" || keys="picture-uri picture-uri-dark"
+
+uri=""
+for key in $keys; do
+    [ -n "$uri" ] && break
+    uri=$(unquote "$(user_dconf read "/org/gnome/desktop/background/$key" || true)")
+done
+[ -n "$uri" ] || { echo "no wallpaper set in $USER_CONFIG" >&2; exit 0; }
+
+src=${uri#file://}
+[ -f "$src" ] || { echo "wallpaper is not a local file: $uri" >&2; exit 0; }
+
+# The greeter runs as its own user and cannot traverse a 0700 home directory,
+# so a wallpaper under /home is unreadable to it however permissive the file
+# itself is -- and gdm-extension quietly falls back to its default colour
+# (red) when the image will not load. GNOME copies any picture chosen in
+# Appearance to ~/.config/background, so this is the normal case, not a corner
+# one. Publish a copy the greeter can read and point it at that instead.
+mkdir -p "$STATE"
+base=${src##*/}; ext=${base##*.}
+# ~/.config/background has no extension at all. Most loaders sniff content,
+# but naming the copy correctly costs nothing and removes the question.
+if [ "$ext" = "$base" ]; then
+    case "$(file -b --mime-type "$src")" in
+        image/jpeg) ext=jpg ;;
+        image/png)  ext=png ;;
+        image/webp) ext=webp ;;
+        image/jxl)  ext=jxl ;;
+        image/avif) ext=avif ;;
+        *)          ext=img ;;
+    esac
+fi
+PUBLIC="$STATE/wallpaper.$ext"
+install -m 644 "$src" "$PUBLIC"
+chmod 755 "$STATE"
+restorecon "$PUBLIC" "$STATE" 2>/dev/null || true
+gdm_uri="file://$PUBLIC"
+
+mkdir -p "$STATE"
+installed_sha=$(sha256sum "$THEME" | cut -d' ' -f1)
+# First run, or gnome-shell was updated and replaced the theme we installed:
+# adopt whatever is there now as the base so package changes are not reverted.
+if [ ! -f "$PRISTINE" ] || { [ -f "$STAMP" ] && ! grep -qx "built=$installed_sha" "$STAMP"; }; then
+    install -m 644 "$THEME" "$PRISTINE"
+    rm -f "$STAMP"
+fi
+
+# Decide what actually needs doing. The path unit fires on every dconf write,
+# so both checks stay cheap: a grep, and one bus-free read of the greeter db.
+# Keyed on content, not just the URI: GNOME copies every picture chosen in
+# Appearance to the same ~/.config/background path, so the URI never changes
+# even though the image does.
+src_sha=$(sha256sum "$src" | cut -d' ' -f1)
+# Bump when the theme edits below change, so the next run rebuilds once.
+THEME_EDITS=glass3
+need_theme=1; grep -qx "uri=$uri src=$src_sha edits=$THEME_EDITS" "$STAMP" 2>/dev/null && need_theme=0
+need_paths=0
+greeter_paths=$(XDG_CONFIG_HOME="$GREETER_CONFIG" DCONF_PROFILE=gdm \
+    dconf dump /org/gnome/shell/extensions/gdm-extension/ 2>/dev/null || true)
+for n in $(seq 1 "$MONITORS"); do
+    printf '%s\n' "$greeter_paths" | grep -qx "background-image-path-$n='$gdm_uri'" || need_paths=1
+done
+[ "$need_theme" = 0 ] && [ "$need_paths" = 0 ] && exit 0
+
+if [ "$need_theme" = 1 ]; then
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/res"
+gresource list "$PRISTINE" | while read -r r; do
+    rel="${r#/org/gnome/shell/theme/}"
+    mkdir -p "$work/res/$(dirname "$rel")"
+    gresource extract "$PRISTINE" "$r" > "$work/res/$rel"
+done
+
+python3 - "$src" "$work/res/background.png" <<'PYEOF'
+import sys
+from PIL import Image
+src, dst = sys.argv[1], sys.argv[2]
+
+# #lockDialogGroup lives in screenShieldGroup, which is bind-constrained to
+# uiGroup, so this image is stretched across the WHOLE multi-monitor stage --
+# ~4:1 here, and a different shape after every monitor change. With
+# background-size:cover ANY image with detail gets scaled up and cropped: a
+# sharp one reads as a hard zoom that snaps when gdm-extension paints over it,
+# and even a blur shows only whichever band survives the crop, so it changes
+# with the layout.
+#
+# A flat colour is the only thing that renders identically at every aspect
+# ratio, because there is nothing left to crop. Taking it from the wallpaper
+# keeps the handover to the real image unobtrusive and follows light and dark
+# wallpapers alike, so this stays correct for any layout and any wallpaper.
+im = Image.open(src).convert('RGB')
+avg = im.resize((1, 1), Image.BOX).getpixel((0, 0))   # BOX to 1x1 == mean pixel
+Image.new('RGB', (64, 64), avg).save(dst, 'PNG', optimize=True)
+print('flat #%02x%02x%02x' % avg, file=sys.stderr)
+PYEOF
+
+# The stock theme styles the widgets of the lock screen (.unlock-dialog) as
+# translucent white over the wallpaper, but the same widgets on the login
+# screen (.login-dialog) as solid greys -- the password field, the round
+# session/cancel buttons and the auth list. macOS draws both the same way.
+# Mirror every lock-screen rule for those widgets onto the login screen,
+# appended so it wins at equal specificity, and derived from the stock CSS so
+# it follows gnome-shell updates. Colours only: the lock screen's own sizes
+# (prompt width, auth-list padding) would reflow the login layout.
+python3 - "$work/res"/gnome-shell-*.css <<'PYEOF'
+import re, sys
+for path in sys.argv[1:]:
+    css = open(path).read()
+    flat = re.sub(r'/\*.*?\*/', '', css, flags=re.S)
+    out = []
+    for sels, body in re.findall(r'([^{}]+)\{([^{}]*)\}', flat):
+        mirrored = [s.strip().replace('.unlock-dialog ', '.login-dialog ', 1)
+                    for s in sels.split(',')
+                    if s.strip().startswith('.unlock-dialog .login-dialog')]
+        decls = [d.strip() for d in body.split(';')
+                 if d.split(':')[0].strip() in ('color', 'background-color', 'box-shadow')]
+        if mirrored and decls:
+            out.append(',\n'.join(mirrored) + ' {\n  ' + ';\n  '.join(decls) + '; }')
+    # The user list and "Not listed?" come before the password and have no
+    # lock-screen counterpart to copy, so they get the same translucent steps
+    # the lock screen's buttons use.
+    sel = ['.login-dialog-user-list-view .login-dialog-user-list .login-dialog-user-list-item',
+           '.login-dialog-not-listed-button']
+    tint = 'st-mix(st-mix(-st-accent-color, #ffffff, 60%), {}, 5%)'
+    for states, bg in [
+        ([''], 'rgba(250, 250, 251, 0.1)'),
+        ([':hover'], 'rgba(250, 250, 251, 0.13)'),
+        ([':active'], 'rgba(250, 250, 251, 0.16)'),
+        ([':active:hover'], 'rgba(250, 250, 251, 0.19)'),
+        ([':focus', ':selected'], tint.format('rgba(250, 250, 251, 0.1)')),
+        ([':focus:hover', ':selected:hover'], tint.format('rgba(250, 250, 251, 0.13)')),
+        ([':active:focus'], tint.format('rgba(250, 250, 251, 0.16)')),
+    ]:
+        out.append(',\n'.join(s + st for s in sel for st in states) +
+                   ' {\n  background-color: ' + bg + '; }')
+    with open(path, 'a') as f:
+        f.write('\n/* gdm-wallpaper-sync: login screen widgets as on the lock screen */\n')
+        f.write('\n'.join(out) + '\n')
+    print(f'{path.rsplit("/", 1)[-1]}: mirrored {len(out)} rules', file=sys.stderr)
+PYEOF
+
+{
+    echo '<?xml version="1.0" encoding="UTF-8"?>'
+    echo '<gresources>'
+    echo '  <gresource prefix="/org/gnome/shell/theme">'
+    (cd "$work/res" && find . -type f -printf '%P\n' | sort) | while read -r f; do
+        case "$f" in
+            *.png) echo "    <file>$f</file>" ;;
+            *)     echo "    <file compressed=\"true\">$f</file>" ;;
+        esac
+    done
+    echo '  </gresource>'
+    echo '</gresources>'
+} > "$work/theme.gresource.xml"
+
+glib-compile-resources --sourcedir="$work/res" --target="$work/new.gresource" "$work/theme.gresource.xml"
+install -m 644 "$work/new.gresource" "$THEME"
+restorecon "$THEME" 2>/dev/null || true
+printf 'uri=%s src=%s edits=%s\nbuilt=%s\n' "$uri" "$src_sha" "$THEME_EDITS" "$(sha256sum "$THEME" | cut -d' ' -f1)" > "$STAMP"
+fi
+
+# gdm re-chowns this tree per greeter session, so match the dconf dir's owner
+# rather than assuming a uid -- the greeter's is reallocated every start. dconf
+# writes need a session bus and leave the db root-owned, hence both of these.
+if [ "$need_paths" = 1 ]; then
+owner=$(stat -c '%u:%g' "$GREETER_CONFIG/dconf")
+for n in $(seq 1 "$MONITORS"); do
+    greeter_dconf write "/org/gnome/shell/extensions/gdm-extension/background-image-path-$n" "'$gdm_uri'"
+    greeter_dconf write "/org/gnome/shell/extensions/gdm-extension/gradient-direction-$n" "'none'"
+done
+chown "$owner" "$GREETER_CONFIG/dconf/user"
+restorecon "$GREETER_CONFIG/dconf/user" 2>/dev/null || true
+fi
+
+echo "synced $uri -> theme:$need_theme displays:$need_paths (applies at next greeter start)"

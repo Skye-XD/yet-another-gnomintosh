@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Switch macOS-style Control in applications on or off.
+#   on      Ctrl+<letter> edits text (A/E line ends, B/F/P/N arrows, D/H delete,
+#           K kill to line end); other Ctrl+letters do nothing. Super is Cmd.
+#   off     Ctrl behaves as stock Linux again; Super still works as Cmd.
+#   status  show which is active
+# default.conf includes /etc/keyd/macos-ctrl, so "off" installs an empty file
+# rather than deleting it: keyd only warns about a missing include, but the
+# warning would hide a real one.
+set -euo pipefail
+SRC="${XDG_DATA_HOME:-$HOME/.local/share}/yet-another-gnomintosh/keyd"
+DST=/etc/keyd/macos-ctrl
+case "${1:-status}" in
+  on|off)
+    prev=$(mktemp); trap 'rm -f "$prev"' EXIT
+    # shellcheck disable=SC2024  # reading a root file into a file we own
+    sudo cat "$DST" > "$prev" 2>/dev/null || : > "$prev"
+    sudo install -m644 "$SRC/macos-ctrl.$1" "$DST"
+    # `keyd reload` exits 0 even when the config fails to parse (keyd then
+    # drops to stock keys), so check first and put the old file back.
+    if ! sudo keyd check /etc/keyd/default.conf >/dev/null; then
+      sudo install -m644 "$prev" "$DST"
+      echo "config failed to parse; left macOS-style Control unchanged" >&2
+      exit 1
+    fi
+    sudo keyd reload
+    # A reload discards the per-application bindings, and the mapper re-sends
+    # them only when focus moves to another app -- so the terminal this ran
+    # in would keep a raw Ctrl+C on Super+C. SIGUSR1 makes it replay now.
+    pkill -USR1 -u "$USER" -f keyd-application-mapper || true
+    echo "macOS-style Control: $1" ;;
+  status)
+    if cmp -s "$SRC/macos-ctrl.on" "$DST"; then echo on; else echo off; fi ;;
+  *) echo "usage: $0 on|off|status" >&2; exit 2 ;;
+esac

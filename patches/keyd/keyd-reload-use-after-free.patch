@@ -1,0 +1,19 @@
+diff --git a/src/daemon.c b/src/daemon.c
+index c70fbab..b5d3873 100644
+--- a/src/daemon.c
++++ b/src/daemon.c
+@@ -297,6 +297,14 @@ static void reload(void)
+ 	size_t i;
+ 
+ 	free_configs();
++	/*
++	 * free_configs() frees every keyboard, and active_kbd points at one of
++	 * them. Left set, the next timeout or scroll on an unmanaged device
++	 * dereferences freed (munmapped: struct keyboard is ~740K) memory and
++	 * segfaults. Every user of active_kbd already copes with NULL, and the
++	 * next key event sets it again.
++	 */
++	active_kbd = NULL;
+ 	load_configs();
+ 
+ 	for (i = 0; i < device_table_sz; i++)

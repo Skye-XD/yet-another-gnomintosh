@@ -1,0 +1,7 @@
+[Unit]
+Description=Copy the desktop user's display layout to GDM's login screen
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gdm-monitors-sync @HOME@/.config/monitors.xml
+

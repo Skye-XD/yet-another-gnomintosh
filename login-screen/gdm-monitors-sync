@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Copy a desktop user's display layout to GDM's login screen.
+#
+# The greeter runs as a dynamic user (a new uid per session) whose
+# XDG_CONFIG_HOME is /var/lib/gdm/seat0/config. That path changed in GNOME 49;
+# most guides still say /var/lib/gdm/.config, which is silently ignored. Either
+# way the greeter never sees the user's own monitors.xml, so without this it
+# falls back to mutter's default monitor pick and the login screen lands on the
+# wrong display.
+set -euo pipefail
+
+SRC=${1:?usage: gdm-monitors-sync <path to a user monitors.xml>}
+DST_DIR=/var/lib/gdm/seat0/config
+DST="$DST_DIR/monitors.xml"
+
+[ -f "$SRC" ] || { echo "no such file: $SRC" >&2; exit 1; }
+# If gdm has never run there is nothing to sync into, and creating the tree by
+# hand risks wrong ownership on a directory gdm manages.
+[ -d "$DST_DIR" ] || { echo "no $DST_DIR yet; skipping" >&2; exit 0; }
+
+# Never publish a truncated or malformed file: a broken monitor config is felt
+# at the login screen, which is the hardest place to recover from.
+python3 - "$SRC" <<'PY'
+import sys, xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+if root.tag != 'monitors':
+    raise SystemExit('unexpected root <%s>, refusing to sync' % root.tag)
+if not root.findall('configuration'):
+    raise SystemExit('no <configuration> entries, refusing to sync')
+PY
+
+cmp -s "$SRC" "$DST" 2>/dev/null && exit 0   # already identical, nothing to do
+
+install -m 644 "$SRC" "$DST"
+# Match the sibling config files; gdm re-chowns this tree for each greeter uid.
+chown "$(stat -c '%u:%g' "$DST_DIR/dconf")" "$DST"
+restorecon "$DST" 2>/dev/null || true
+echo "synced $SRC -> $DST"

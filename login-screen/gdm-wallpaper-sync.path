@@ -1,0 +1,17 @@
+[Unit]
+Description=Watch the desktop user's wallpaper setting for changes
+Documentation=man:systemd.path(5)
+
+[Path]
+# GNOME stores the wallpaper and the colour-scheme in dconf, so watch the user's
+# database. It is rewritten on any settings change, not just these keys -- the
+# service stamps what it last synced and exits immediately when nothing moved.
+#
+# PathChanged alone: dconf writes by replacing the file, and watching Modified
+# as well fires a second time for the same change, doubling the triggers for no
+# extra coverage.
+PathChanged=@HOME@/.config/dconf/user
+Unit=gdm-wallpaper-sync.service
+
+[Install]
+WantedBy=paths.target

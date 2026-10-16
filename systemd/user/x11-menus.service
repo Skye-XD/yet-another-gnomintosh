@@ -1,0 +1,12 @@
+[Unit]
+Description=Start new Electron apps in X11 mode for the global menu
+Documentation=https://github.com/Skye-XD/yet-another-gnomintosh
+
+[Service]
+Type=oneshot
+# Let a package transaction finish unpacking before the app is inspected.
+ExecStartPre=/usr/bin/sleep 5
+ExecStart=%h/.local/bin/x11-menus sync --notify
+
+[Install]
+WantedBy=default.target

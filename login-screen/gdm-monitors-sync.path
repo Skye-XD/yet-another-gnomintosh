@@ -1,0 +1,14 @@
+[Unit]
+Description=Watch the desktop user's display layout for changes
+Documentation=man:systemd.path(5)
+
+[Path]
+# GNOME rewrites this file whenever the display arrangement changes. Both
+# directives are listed because the file is replaced atomically as well as
+# written in place, depending on what changed.
+PathChanged=@HOME@/.config/monitors.xml
+PathModified=@HOME@/.config/monitors.xml
+Unit=gdm-monitors-sync.service
+
+[Install]
+WantedBy=paths.target
