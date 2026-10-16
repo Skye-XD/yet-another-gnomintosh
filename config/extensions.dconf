@@ -83,6 +83,7 @@ start-corner='top-right'
 
 [kiwi]
 dock-adaptive-colors=true
+dock-blur=false
 dock-border=false
 dock-styling=true
 dock-trash-animation=true

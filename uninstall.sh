@@ -45,10 +45,15 @@ else
              /org/gnome/settings-daemon/plugins/media-keys/; do
       dconf reset -f "$p"
     done
+    # The installer also set these two outside those paths. A snapshot taken
+    # on a fresh system has neither key, so loading it would leave them set.
+    gsettings reset org.gnome.shell enabled-extensions
+    gsettings reset org.gnome.shell disable-extension-version-validation
     dconf load / < "$snapshot"
     note "restored $snapshot (current settings saved in $OUT)"
   else
     gsettings reset org.gnome.shell enabled-extensions
+    gsettings reset org.gnome.shell disable-extension-version-validation
     note "no snapshot found; just turned the extensions off"
   fi
 fi
@@ -75,9 +80,42 @@ for f in "$HOME"/.local/share/applications/*.desktop; do
   grep -q '^X-GlobalMenu-Source=' "$f" 2>/dev/null && rm -f "$f" && note "removed $(basename "$f")"
 done
 rm -f "$HOME/.local/bin/x11-menus"
-if flatpak info org.telegram.desktop >/dev/null 2>&1; then
-  flatpak override --user --nosocket=x11 --unset-env=QT_QPA_PLATFORM org.telegram.desktop || true
-fi
+# Take back only what was added: the x11 socket, Telegram's QT_QPA_PLATFORM and
+# the registrar bus name. `--nosocket=x11` would instead *deny* x11, even to an
+# app whose own manifest asks for it.
+revert_flatpak_override() { # app-id
+  python3 -I - "$HOME/.local/share/flatpak/overrides/$1" <<'PY'
+import configparser, os, sys
+path = sys.argv[1]
+if not os.path.exists(path):
+    sys.exit()
+kf = configparser.ConfigParser(interpolation=None, delimiters=('=',))
+kf.optionxform = str
+kf.read(path)
+if kf.has_option('Context', 'sockets'):
+    keep = [s for s in kf['Context']['sockets'].split(';') if s and s != 'x11']
+    if keep:
+        kf['Context']['sockets'] = ';'.join(keep) + ';'
+    else:
+        kf.remove_option('Context', 'sockets')
+for section, key in (('Environment', 'QT_QPA_PLATFORM'),
+                     ('Session Bus Policy', 'com.canonical.AppMenu.Registrar')):
+    if kf.has_section(section):
+        kf.remove_option(section, key)
+for section in [s for s in kf.sections() if not kf[s]]:
+    kf.remove_section(section)
+if kf.sections():
+    with open(path, 'w') as f:
+        kf.write(f, space_around_delimiters=False)
+else:
+    os.remove(path)
+PY
+}
+grants="$HOME/.config/x11-menus/flatpak-grants"
+for app in org.telegram.desktop $(cat "$grants" 2>/dev/null); do
+  revert_flatpak_override "$app" && note "flatpak $app: our x11 override taken back"
+done
+rm -f "$grants"
 
 if [ "$login" = 1 ]; then
   say "Login screen"
@@ -91,6 +129,10 @@ if [ "$login" = 1 ]; then
   fi
   sudo rm -rf /usr/local/share/gnome-shell/extensions/gdm-extension@pratap.fastmail.fm
   sudo rm -f /etc/dconf/db/gdm.d/99-gdm-extension
+  if [ -f "$DATA/created-gdm-profile" ]; then
+    sudo rm -f /etc/dconf/profile/gdm
+    rm -f "$DATA/created-gdm-profile"
+  fi
   sudo dconf update
   sudo systemctl daemon-reload
   note "stock login screen from the next time it starts"

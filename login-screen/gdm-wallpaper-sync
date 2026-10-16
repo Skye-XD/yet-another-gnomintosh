@@ -23,7 +23,12 @@ STAMP="$STATE/stamp"
 GREETER_CONFIG=/var/lib/gdm/seat0/config
 MONITORS=4                                   # gdm-extension supports 1..4
 
-user_dconf() { XDG_CONFIG_HOME="$USER_CONFIG" dconf "$@"; }
+# Everything that touches the user's files runs as that user. This service is
+# root and the wallpaper path comes from the user's own settings: read as root,
+# a wallpaper set to /etc/shadow would be republished world-readable below.
+owner=$(stat -c %U "$USER_CONFIG")
+as_user() { runuser -u "$owner" -- "$@"; }
+user_dconf() { as_user env XDG_CONFIG_HOME="$USER_CONFIG" dconf "$@"; }
 greeter_dconf() {
     XDG_CONFIG_HOME="$GREETER_CONFIG" DCONF_PROFILE=gdm dbus-run-session -- dconf "$@"
 }
@@ -39,8 +44,16 @@ for key in $keys; do
 done
 [ -n "$uri" ] || { echo "no wallpaper set in $USER_CONFIG" >&2; exit 0; }
 
-src=${uri#file://}
-[ -f "$src" ] || { echo "wallpaper is not a local file: $uri" >&2; exit 0; }
+src=$(python3 -I -c 'import sys, urllib.parse as u
+p = u.urlsplit(sys.argv[1])
+print(u.unquote(p.path) if p.scheme == "file" else "")' "$uri")
+as_user test -f "$src" || { echo "wallpaper is not a local file: $uri" >&2; exit 0; }
+
+# Snapshot it once, as the user, and work only from the snapshot from here on.
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+snap="$work/wallpaper"
+as_user head -c 268435456 -- "$src" > "$snap" ||
+    { echo "cannot read $src as $owner" >&2; exit 0; }
 
 # The greeter runs as its own user and cannot traverse a 0700 home directory,
 # so a wallpaper under /home is unreadable to it however permissive the file
@@ -53,7 +66,7 @@ base=${src##*/}; ext=${base##*.}
 # ~/.config/background has no extension at all. Most loaders sniff content,
 # but naming the copy correctly costs nothing and removes the question.
 if [ "$ext" = "$base" ]; then
-    case "$(file -b --mime-type "$src")" in
+    case "$(as_user file -b --mime-type - < "$snap")" in
         image/jpeg) ext=jpg ;;
         image/png)  ext=png ;;
         image/webp) ext=webp ;;
@@ -63,7 +76,7 @@ if [ "$ext" = "$base" ]; then
     esac
 fi
 PUBLIC="$STATE/wallpaper.$ext"
-install -m 644 "$src" "$PUBLIC"
+install -m 644 "$snap" "$PUBLIC"
 chmod 755 "$STATE"
 restorecon "$PUBLIC" "$STATE" 2>/dev/null || true
 gdm_uri="file://$PUBLIC"
@@ -82,7 +95,7 @@ fi
 # Keyed on content, not just the URI: GNOME copies every picture chosen in
 # Appearance to the same ~/.config/background path, so the URI never changes
 # even though the image does.
-src_sha=$(sha256sum "$src" | cut -d' ' -f1)
+src_sha=$(sha256sum "$snap" | cut -d' ' -f1)
 # Bump when the theme edits below change, so the next run rebuilds once.
 THEME_EDITS=glass3
 need_theme=1; grep -qx "uri=$uri src=$src_sha edits=$THEME_EDITS" "$STAMP" 2>/dev/null && need_theme=0
@@ -95,7 +108,6 @@ done
 [ "$need_theme" = 0 ] && [ "$need_paths" = 0 ] && exit 0
 
 if [ "$need_theme" = 1 ]; then
-work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/res"
 gresource list "$PRISTINE" | while read -r r; do
     rel="${r#/org/gnome/shell/theme/}"
@@ -103,10 +115,18 @@ gresource list "$PRISTINE" | while read -r r; do
     gresource extract "$PRISTINE" "$r" > "$work/res/$rel"
 done
 
-python3 - "$src" "$work/res/background.png" <<'PYEOF'
+# Decoding is done as the user too (the image is theirs, and so is any decoder
+# bug it trips); only the resulting colour comes back to root.
+avg=$(as_user python3 -I -c '
 import sys
 from PIL import Image
-src, dst = sys.argv[1], sys.argv[2]
+im = Image.open(sys.stdin.buffer).convert("RGB")
+print(*im.resize((1, 1), Image.BOX).getpixel((0, 0)))   # BOX to 1x1 == mean pixel
+' < "$snap")
+python3 -I - "$avg" "$work/res/background.png" <<'PYEOF'
+import sys
+from PIL import Image
+avg, dst = tuple(int(v) for v in sys.argv[1].split()), sys.argv[2]
 
 # #lockDialogGroup lives in screenShieldGroup, which is bind-constrained to
 # uiGroup, so this image is stretched across the WHOLE multi-monitor stage --
@@ -120,8 +140,6 @@ src, dst = sys.argv[1], sys.argv[2]
 # ratio, because there is nothing left to crop. Taking it from the wallpaper
 # keeps the handover to the real image unobtrusive and follows light and dark
 # wallpapers alike, so this stays correct for any layout and any wallpaper.
-im = Image.open(src).convert('RGB')
-avg = im.resize((1, 1), Image.BOX).getpixel((0, 0))   # BOX to 1x1 == mean pixel
 Image.new('RGB', (64, 64), avg).save(dst, 'PNG', optimize=True)
 print('flat #%02x%02x%02x' % avg, file=sys.stderr)
 PYEOF

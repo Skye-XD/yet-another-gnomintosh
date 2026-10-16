@@ -24,6 +24,12 @@ USERDATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 EXT="$USERDATA/gnome-shell/extensions"
 GH="https://github.com"
 KEYD_TAG="v2.6.0"
+# Third-party code is pinned to the commit this was tested against; bump these
+# deliberately. gdm-extension's installer runs as root.
+WHITESUR_GTK=d5782652d412137e26fb8ff55b55a5572e4c6995
+WHITESUR_ICONS=73d8040da51a9ed74e47c7366e7e9ff437601a5c
+WHITESUR_CURSORS=e190baf618ed95ee217d2fd45589bd309b37672b
+GDM_EXTENSION=f7c249e91f40ba8d293338085708938b9cc00b55
 
 STEPS=(preflight packages theme forks stock-extensions keyd x11-menus settings apps)
 OPTIONAL=(login-screen hibernate-fix)
@@ -90,16 +96,17 @@ has()  { command -v "$1" >/dev/null 2>&1; }
 
 backup_dir() { mkdir -p "$BACKUPS"; printf '%s' "$BACKUPS"; }
 
-# Clone or fast-forward a repo into $SRC/<name>.
-fetch() { # url name [branch-or-tag]
-  local url=$1 ref=${3:-} dir="$SRC/$2"
-  mkdir -p "$SRC"
-  if [ -d "$dir/.git" ]; then
-    git -C "$dir" fetch -q --depth 1 origin "${ref:-HEAD}"
-    git -C "$dir" checkout -q -f FETCH_HEAD
-  else
-    git -c advice.detachedHead=false clone -q --depth 1 ${ref:+--branch "$ref"} "$url" "$dir"
+# Fetch one ref of a repo into $SRC/<name>, shallow. The ref may be a branch,
+# a tag or a commit SHA (GitHub serves any of them to a shallow fetch).
+fetch() { # url name [ref]
+  local url=$1 ref=${3:-HEAD} dir="$SRC/$2"
+  if [ ! -d "$dir/.git" ]; then
+    git init -q "$dir"
+    git -C "$dir" remote add origin "$url"
   fi
+  git -C "$dir" remote set-url origin "$url"
+  git -C "$dir" fetch -q --depth 1 origin "$ref"
+  git -C "$dir" -c advice.detachedHead=false checkout -q -f FETCH_HEAD
   printf '%s' "$dir"
 }
 
@@ -118,9 +125,11 @@ set_aside() {
 }
 
 # Install an extension zip (extensions.gnome.org or a `gnome-extensions pack`).
-install_zip() { # zip
+install_zip() { # zip expected-uuid
   local zip=$1 uuid
   uuid=$(unzip -p "$zip" metadata.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["uuid"])')
+  # The uuid becomes a path; never trust it further than the one asked for.
+  [ "$uuid" = "$2" ] || die "$zip claims to be '$uuid', expected '$2'"
   set_aside "$uuid"
   mkdir -p "$EXT/$uuid"
   unzip -oq "$zip" -d "$EXT/$uuid"
@@ -162,12 +171,12 @@ step_packages() {
 step_theme() {
   say "Installing the WhiteSur theme, icons and cursors"
   local d
-  d=$(fetch "$GH/vinceliuice/WhiteSur-gtk-theme.git" WhiteSur-gtk-theme)
+  d=$(fetch "$GH/vinceliuice/WhiteSur-gtk-theme.git" WhiteSur-gtk-theme "$WHITESUR_GTK")
   # -l also writes the libadwaita (GTK4) variant into ~/.config/gtk-4.0.
   (cd "$d" && ./install.sh -c dark -c light -l >/dev/null)
-  d=$(fetch "$GH/vinceliuice/WhiteSur-icon-theme.git" WhiteSur-icon-theme)
+  d=$(fetch "$GH/vinceliuice/WhiteSur-icon-theme.git" WhiteSur-icon-theme "$WHITESUR_ICONS")
   (cd "$d" && ./install.sh >/dev/null)
-  d=$(fetch "$GH/vinceliuice/WhiteSur-cursors.git" WhiteSur-cursors)
+  d=$(fetch "$GH/vinceliuice/WhiteSur-cursors.git" WhiteSur-cursors "$WHITESUR_CURSORS")
   (cd "$d" && ./install.sh >/dev/null)
 }
 
@@ -184,7 +193,7 @@ build_fork() { # dir how
     make-zip)
       set_aside "$uuid"
       make -s -C "$dir" build >/dev/null
-      install_zip "$dir/build/$uuid.shell-extension.zip" >/dev/null ;;
+      install_zip "$dir/build/$uuid.shell-extension.zip" "$uuid" >/dev/null ;;
     meson)
       set_aside "$uuid"
       rm -rf "$dir/_build"
@@ -207,6 +216,11 @@ build_fork() { # dir how
       copy_extension "$dir/_build" "$uuid" ;;
     *) die "unknown build '$how'" ;;
   esac
+  # Ship the licence with every build; not every build system copies it.
+  local f
+  for f in "$dir"/LICENSE* "$dir"/COPYING*; do
+    if [ -f "$f" ] && [ ! -e "$EXT/$uuid/${f##*/}" ]; then cp "$f" "$EXT/$uuid/"; fi
+  done
   note "$uuid"
 }
 
@@ -229,7 +243,7 @@ step_stock_extensions() {
     [ -n "$uuid" ] || continue
     if curl -fsSL -o "$zip" \
         "https://extensions.gnome.org/download-extension/$uuid.shell-extension.zip?shell_version=$v"; then
-      install_zip "$zip" >/dev/null && note "$uuid"
+      install_zip "$zip" "$uuid" >/dev/null && note "$uuid"
     else
       warn "could not download $uuid for GNOME $v -- install it by hand"
     fi
@@ -254,12 +268,12 @@ step_keyd() {
   sudo install -m644 "$REPO/config/keyd/default.conf" /etc/keyd/default.conf
   sudo install -m644 "$REPO/config/keyd/macos-ctrl.on" /etc/keyd/macos-ctrl
   sudo keyd check /etc/keyd/default.conf >/dev/null || die "keyd rejected its config"
-  sudo systemctl enable --now keyd
-  sudo systemctl restart keyd
-
-  # The per-application mapper talks to keyd over a socket owned by group keyd.
+  # The per-application mapper talks to keyd over a socket owned by group keyd,
+  # so the group has to exist before keyd starts and creates that socket.
   getent group keyd >/dev/null || sudo groupadd keyd
   sudo usermod -aG keyd "$USER"
+  sudo systemctl enable --now keyd
+  sudo systemctl restart keyd
   mkdir -p "$HOME/.config/keyd"
   install -m644 "$REPO/config/keyd/app.conf" "$HOME/.config/keyd/app.conf"
 
@@ -333,8 +347,15 @@ step_login_screen() {
   [ -z "$others" ] || die "other files in /etc/dconf/db/gdm.d also set enabled-extensions ($others); only one may"
 
   local d
-  d=$(fetch "$GH/pratap-panabaka/gse-gdm-extension.git" gse-gdm-extension)
+  d=$(fetch "$GH/pratap-panabaka/gse-gdm-extension.git" gse-gdm-extension "$GDM_EXTENSION")
+  # Its installer writes /etc/dconf/profile/gdm when there is none; remember
+  # that, so uninstall removes only a profile this put there.
+  local had_profile=0
+  [ -e /etc/dconf/profile/gdm ] && had_profile=1
   (cd "$d" && sudo ./install.sh >/dev/null)
+  if [ "$had_profile" = 0 ] && [ -e /etc/dconf/profile/gdm ]; then
+    mkdir -p "$DATA" && touch "$DATA/created-gdm-profile"
+  fi
 
   sudo install -m755 "$REPO/login-screen/gdm-wallpaper-sync" /usr/local/bin/gdm-wallpaper-sync
   sudo install -m755 "$REPO/login-screen/gdm-monitors-sync" /usr/local/bin/gdm-monitors-sync
@@ -374,6 +395,9 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+for s in "${skip[@]}"; do
+  declare -F "step_${s//-/_}" >/dev/null || die "no such step: $s"
+done
 run=()
 if [ ${#only[@]} -gt 0 ]; then run=("${only[@]}"); else run=("${STEPS[@]}" "${extra[@]}"); fi
 for s in "${run[@]}"; do

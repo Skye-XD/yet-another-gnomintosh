@@ -31,6 +31,9 @@ from pathlib import Path
 HOME = Path.home()
 OVERRIDES = HOME / '.local/share/applications'
 IGNORE_FILE = HOME / '.config/x11-menus/ignore'
+# Flatpaks this granted x11 + the registrar to, so uninstall can take back
+# exactly that.
+GRANTS_FILE = HOME / '.config/x11-menus/flatpak-grants'
 BACKUPS = HOME / '.local/share/yet-another-gnomintosh/backups'
 SOURCES = [
     Path('/usr/share/applications'),
@@ -211,6 +214,13 @@ def flatpak_grant(fid):
     needs the registrar's bus name."""
     subprocess.run(['flatpak', 'override', '--user', '--socket=x11',
                     f'--talk-name={REGISTRAR}', fid], check=True)
+    try:
+        granted = set(GRANTS_FILE.read_text().split())
+    except FileNotFoundError:
+        granted = set()
+    if fid not in granted:
+        GRANTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        GRANTS_FILE.write_text(''.join(f'{g}\n' for g in sorted(granted | {fid})))
 
 
 def scan():
@@ -233,7 +243,10 @@ def scan():
 
 
 def managed(path):
-    text = path.read_text()
+    try:
+        text = path.read_text()
+    except (OSError, UnicodeDecodeError):
+        return None     # not ours: we only ever write UTF-8
     src = entry_value(text, 'X-GlobalMenu-Source')
     return (Path(src), entry_value(text, 'X-GlobalMenu-Mode')) if src else None
 
