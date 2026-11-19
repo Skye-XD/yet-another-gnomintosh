@@ -36,7 +36,7 @@ pipeline='pipeline_default'
 
 [dash-to-dock]
 background-color='rgb(28,28,28)'
-background-opacity=0.80000000000000004
+background-opacity=0.20000000000000001
 custom-theme-running-dots-color='rgb(250,250,251)'
 custom-theme-shrink=true
 dash-max-icon-size=48
@@ -51,6 +51,7 @@ show-apps-at-top=true
 show-mounts=false
 show-mounts-network=false
 show-show-apps-button=true
+transparency-mode='FIXED'
 
 [globalmenu]
 mac-shortcut-symbols=true
