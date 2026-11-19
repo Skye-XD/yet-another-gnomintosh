@@ -156,7 +156,7 @@ step_preflight() {
   local v; v=$(gnome-shell --version | awk '{print int($3)}')
   [ "$v" -ge 50 ] || warn "made on GNOME 50; GNOME $v is untested"
   [ "${XDG_SESSION_TYPE:-}" = wayland ] || warn "made for a Wayland session; you are in '${XDG_SESSION_TYPE:-unknown}'"
-  sudo -v || die "sudo is needed for packages, keyd and the login screen"
+  sudo true || die "sudo is needed for packages, keyd and the login screen"
   note "Fedora $(. /etc/os-release && echo "$VERSION_ID"), GNOME $v -- carrying on"
 }
 
