@@ -5,7 +5,7 @@
 > It has been far too long since my last honest desktop. I took GNOME — a
 > desktop with a clear, considered, deliberately un-Mac philosophy — and I
 > dragged it, kicking and screaming, as close to macOS as I could. I forked
-> eleven extensions. I patched a keyboard daemon. I taught Chrome to put its
+> twelve extensions. I patched a keyboard daemon. I taught Chrome to put its
 > menus in a bar it was never meant to know about. I made the trash can *gulp*.
 >
 > I am not sorry. But I felt you should know.
@@ -161,9 +161,10 @@ can never quietly "update" them back), each built from its `skye/install` branch
 | Dock styling, trash, panel | [kiwi-kemma](https://github.com/Skye-XD/kiwi-kemma) | [kem-a/kiwi-kemma](https://github.com/kem-a/kiwi-kemma) |
 | Genie minimise | [compiz-alike-magic-lamp-effect](https://github.com/Skye-XD/compiz-alike-magic-lamp-effect) | [hermes83/compiz-alike-magic-lamp-effect](https://github.com/hermes83/compiz-alike-magic-lamp-effect) |
 | PiP on top | [gnome-shell-extension-pip-on-top](https://github.com/Skye-XD/gnome-shell-extension-pip-on-top) | [Rafostar/gnome-shell-extension-pip-on-top](https://github.com/Rafostar/gnome-shell-extension-pip-on-top) |
+| Spotlight | [rudra](https://github.com/Skye-XD/rudra) | [narkagni/rudra](https://github.com/narkagni/rudra) |
 
 Installed untouched from extensions.gnome.org: Dash to Dock, User Themes,
-Weather or Not, Rudra, Kiwi Menu, Wiggly, Hibernate Status; AppIndicator from
+Weather or Not, Kiwi Menu, Wiggly, Hibernate Status; AppIndicator from
 Fedora. Plus [WhiteSur](https://github.com/vinceliuice) by vinceliuice,
 [keyd](https://github.com/rvaiya/keyd) by rvaiya, and the
 [GDM extension](https://github.com/pratap-panabaka/gse-gdm-extension) by

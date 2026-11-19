@@ -51,6 +51,7 @@ NexStage|skye/install|make-install
 kiwi-kemma|skye/install|copy
 compiz-alike-magic-lamp-effect|skye/install|copy
 gnome-shell-extension-pip-on-top|skye/install|copy
+rudra|skye/install|copy
 "
 
 # Unpatched, installed straight from extensions.gnome.org so they keep updating.
@@ -58,7 +59,6 @@ STOCK_EXTENSIONS="
 dash-to-dock@micxgx.gmail.com
 user-theme@gnome-shell-extensions.gcampax.github.com
 weatherornot@somepaulo.github.io
-rudra@narkagni
 kiwimenu@kemma
 wiggly@mojarch
 hibernate-status@dromi
@@ -70,7 +70,7 @@ ENABLED_EXTENSIONS=(
   compiz-alike-magic-lamp-effect@skye-xd.github.io
   dash-to-dock@micxgx.gmail.com
   weatherornot@somepaulo.github.io
-  rudra@narkagni
+  rudra@skye-xd.github.io
   oramic-launcher@skye-xd.github.io
   blur-my-shell@skye-xd.github.io
   multi-monitors-bar@skye-xd.github.io
@@ -343,7 +343,7 @@ step_settings() {
   note "previous settings saved to $BACKUPS/dconf-before.ini"
   dconf load / < "$REPO/config/desktop.dconf"
   dconf load /org/gnome/shell/extensions/ < "$REPO/config/extensions.dconf"
-  # Rudra and hibernate-status still only declare GNOME 49.
+  # hibernate-status still only declares GNOME 48.
   gsettings set org.gnome.shell disable-extension-version-validation true
   local list
   list=$(printf "'%s', " "${ENABLED_EXTENSIONS[@]}")
